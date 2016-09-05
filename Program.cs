@@ -95,6 +95,8 @@ namespace PeerFinderConsole
                 object sender,
                 Windows.Networking.Proximity.TriggeredConnectionStateChangedEventArgs e)
             {
+                // THIS METHOD IS NEVER INVOKED, I don't know why yet
+
                 Console.WriteLine("Peer found! " + e.Id);
 
                 if (e.State == Windows.Networking.Proximity.TriggeredConnectState.PeerFound)
