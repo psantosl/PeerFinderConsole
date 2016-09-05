@@ -4,6 +4,7 @@ using Windows.Networking.Proximity;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Tasks;
 using System.Threading;
+using System.IO;
 
 namespace App
 {
@@ -100,55 +101,6 @@ namespace App
             }
         }
 
-        static void Receiver(PeerInformation peerInfo)
-        {
-            Console.WriteLine("Receiver waiting to connect async");
-
-            Windows.Networking.Sockets.StreamSocket socket =
-                PeerFinder.ConnectAsync(peerInfo).AsTask().Result;
-
-            Console.WriteLine("Receiver connection happened");
-
-            Windows.Storage.Streams.DataReader r = new Windows.Storage.Streams.DataReader(socket.InputStream);
-
-            Console.WriteLine("Datareader created");
-
-            int ini = Environment.TickCount;
-
-            Console.WriteLine("Loaded async {0} bytes", r.LoadAsync(8).AsTask().Result);
-
-            long totalToRead = r.ReadInt64();
-
-            Console.WriteLine("Going to read {0} bytes", totalToRead);
-
-            long read = 0;
-
-            byte[] buffer = new byte[512*1024];
-
-            while (read < totalToRead)
-            {
-                long toRead = totalToRead - read;
-
-                if (toRead >= buffer.Length)
-                {
-                    toRead = buffer.Length;
-                }
-                else
-                {
-                    buffer = new byte[toRead];
-                }
-
-                Console.WriteLine("Loaded async {0} bytes", r.LoadAsync((uint)toRead).AsTask().Result);
-
-                r.ReadBytes(buffer);
-
-                read += toRead;
-            }
-
-            Console.WriteLine("Read {0} bytes in {1} sec",
-                totalToRead, (Environment.TickCount - ini) / 1000);
-        }
-
         void TriggeredConnectionStateChanged(
             object sender,
             Windows.Networking.Proximity.TriggeredConnectionStateChangedEventArgs e)
@@ -168,46 +120,95 @@ namespace App
 
         void Sender(Windows.Networking.Sockets.StreamSocket socket)
         {
-            Windows.Storage.Streams.DataWriter w = new Windows.Storage.Streams.DataWriter(socket.OutputStream);
+            using (Stream streamWrite = socket.OutputStream.AsStreamForWrite())
+            using (BinaryWriter writer = new BinaryWriter(streamWrite))
+            using (Stream streamRead = socket.InputStream.AsStreamForRead())
+            using (BinaryReader reader = new BinaryReader(streamRead))
+            {
+                int ini = Environment.TickCount;
+
+                long totalToSend = 64 * 1024 * 1024;
+
+                writer.Write(totalToSend);
+
+                Console.WriteLine("Going to send {0} bytes", totalToSend);
+
+                long sent = 0;
+
+                byte[] buffer = new byte[4 * 1024 * 1024];
+
+                while (sent < totalToSend)
+                {
+                    long toSend = totalToSend - sent;
+
+                    if (toSend >= buffer.Length)
+                    {
+                        toSend = buffer.Length;
+                    }
+
+                    writer.Write(buffer, 0, (int)toSend);
+
+                    Console.WriteLine("{0}/{1}", sent, totalToSend);
+
+                    writer.Flush();
+
+                    reader.ReadBoolean();
+
+                    sent += toSend;
+                }
+
+                Console.WriteLine("Written {0} bytes in {1} sec",
+                    totalToSend, (Environment.TickCount - ini) / 1000);
+            }
+        }
+
+        static void Receiver(PeerInformation peerInfo)
+        {
+            Console.WriteLine("Receiver waiting to connect async");
+
+            Windows.Networking.Sockets.StreamSocket socket =
+                PeerFinder.ConnectAsync(peerInfo).AsTask().Result;
+
+            Console.WriteLine("Receiver connection happened");
 
             int ini = Environment.TickCount;
 
-            long totalToSend = 64 * 1024 * 1024;
-
-            w.WriteInt64(totalToSend);
-
-            Console.WriteLine("Going to send {0} bytes", totalToSend);
-
-            long sent = 0;
-
-            byte[] buffer = new byte[512 * 1024];
-
-            while (sent < totalToSend)
+            using (Stream streamRead = socket.InputStream.AsStreamForRead())
+            using (Stream streamWrite = socket.OutputStream.AsStreamForWrite())
+            using (BinaryReader reader = new BinaryReader(streamRead))
+            using (BinaryWriter writer = new BinaryWriter(streamWrite))
             {
-                long toSend = totalToSend - sent;
+                long totalToRead = reader.ReadInt64();
 
-                if (toSend >= buffer.Length)
+                Console.WriteLine("Going to read {0} bytes", totalToRead);
+
+                long read = 0;
+
+                byte[] buffer = new byte[4* 1024 * 1024];
+
+                while (read < totalToRead)
                 {
-                    toSend = buffer.Length;
-                }
-                else
-                {
-                    buffer = new byte[toSend];
+                    long toRead = totalToRead - read;
+
+                    if (toRead >= buffer.Length)
+                    {
+                        toRead = buffer.Length;
+                    }
+
+                    reader.Read(buffer, 0, (int)toRead);
+
+                    Console.WriteLine("{0}/{1}", read, totalToRead);
+
+                    read += toRead;
+
+                    writer.Write(true);
+
+                    writer.Flush();
                 }
 
-                w.WriteBytes(buffer);
-
-                sent += toSend;
+                Console.WriteLine("Read {0} bytes in {1} sec",
+                    totalToRead, (Environment.TickCount - ini) / 1000);
             }
-
-            Console.WriteLine("stored async: {0} bytes", w.StoreAsync().AsTask().Result);
-
-            if (w.FlushAsync().AsTask().Result)
-                Console.WriteLine("Sent correctly");
-
-            Console.WriteLine("Written {0} bytes in {1} sec",
-                totalToSend, (Environment.TickCount - ini) / 1000);
-
         }
 
         //https://social.msdn.microsoft.com/Forums/en-US/ce649545-9ec6-45da-a4ee-71b9f2bed156/using-metro-win8-sdk-to-build-desktop-style-application?forum=winappswithnativecode
